@@ -109,5 +109,19 @@
 ## Part 5: Scaling & Reliability
 
 ### Exercise 5.1-5.5: Implementation notes
-[Your explanations and test results]
+
+- **Exercise 5.1 (Health & Readiness checks):** 
+  - **Liveness Probe (`/health`):** Báo cáo trạng thái sống của agent (có bị treo không) cho Cloud Platform/Docker. Nếu endpoint trả về lỗi hoặc timeout, container sẽ tự động bị restart.
+  - **Readiness Probe (`/ready`):** Kiểm tra xem service đã load xong Model AI và có kết nối được Redis/DB chưa. Nếu trả về lỗi (503), Load Balancer (Nginx) sẽ biết và không điều hướng traffic vào instance này, tránh việc user nhận lỗi hệ thống.
+
+- **Exercise 5.2 (Graceful shutdown):**
+  - Sử dụng thư viện `signal` để bắt tín hiệu `SIGTERM` (tín hiệu yêu cầu tắt ứng dụng từ Docker/Kubernetes).
+  - Thay vì tắt phụt ngay lập tức (Hard kill), ứng dụng sẽ từ chối nhận request mới và chờ (tối đa 30s) để xử lý hoàn tất nốt các request đang dang dở (in-flight requests), gửi xong response về cho client rồi mới thoát hoàn toàn.
+
+- **Exercise 5.3 & 5.5 (Stateless design & Test):**
+  - **Anti-pattern:** Lưu session chat trong dictionary trên RAM của biến toàn cục (Global variable). Khi scale ra 3 instances, user chat vào instance 1, nhưng request tiếp theo load balancer chuyển sang instance 2 thì instance 2 sẽ không có context đoạn chat trước.
+  - **Stateless:** Refactor lưu toàn bộ lịch sử (history) và session vào Redis. Khi user chat tiếp, bất cứ instance nào nhận được request cũng có thể truy xuất ID lên Redis để lấy history và phản hồi một cách bình thường. `test_stateless.py` đã chứng minh cuộc hội thoại tiếp diễn bình thường kể cả khi kill bất ngờ một vài instances ở giữa.
+
+- **Exercise 5.4 (Load balancing):**
+  - Khi start nhiều instance (`--scale agent=3`), Nginx đóng vai trò làm Load Balancer. Client gọi tới port 80 của Nginx, Nginx sẽ luân phiên phân phát request đều đặn đến 3 container backend đằng sau. Giúp hệ thống phân tải (Scale out) và nếu 1 node chết, các node còn lại vẫn hứng traffic.
 ```
