@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request
 from pydantic import BaseModel
 import redis
+from openai import OpenAI, RateLimitError, APIError
 
 from .config import settings
 from .auth import verify_api_key
@@ -46,6 +47,21 @@ except Exception as e:
     logger.warning(f"Failed to connect to Redis: {e}")
     REDIS_OK = False
     r = None
+
+# ---------------------------------------------------------
+# LLM Setup (TokenRouter)
+# ---------------------------------------------------------
+try:
+    if settings.TOKEN_ROUTER_API_KEY:
+        llm_client = OpenAI(
+            api_key=settings.TOKEN_ROUTER_API_KEY,
+            base_url=settings.TOKEN_ROUTER_BASE_URL
+        )
+    else:
+        llm_client = None
+except Exception as e:
+    logger.warning(f"Failed to initialize OpenAI client: {e}")
+    llm_client = None
 
 # ---------------------------------------------------------
 # Graceful Shutdown & Application State
@@ -122,6 +138,22 @@ def mock_llm_call(question: str, history: list) -> str:
     turns = len([m for m in history if m["role"] == "user"])
     return f"This is an AI response to '{question}'. Total previous turns: {turns}"
 
+def call_tokenrouter_llm(question: str, history: list) -> str:
+    """Gọi LLM qua TokenRouter API."""
+    if not llm_client:
+        raise Exception("LLM client not configured")
+        
+    messages = [{"role": "system", "content": "You are a helpful AI assistant."}]
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": question})
+
+    response = llm_client.chat.completions.create(
+        model=settings.LLM_MODEL,
+        messages=messages
+    )
+    return response.choices[0].message.content
+
 @app.post("/ask")
 def ask(
     body: ChatRequest,
@@ -148,8 +180,22 @@ def ask(
         if data:
             history = json.loads(data)
 
-    # 2. Call LLM (using mock LLM for this lab)
-    answer = mock_llm_call(body.question, history)
+    # 2. Call LLM (using TokenRouter if available, else fallback)
+    try:
+        if llm_client:
+            answer = call_tokenrouter_llm(body.question, history)
+        else:
+            answer = mock_llm_call(body.question, history)
+    except RateLimitError as e:
+        logger.warning(f"TokenRouter API rate limit / token limit reached: {e}. Falling back to mock LLM.")
+        answer = mock_llm_call(body.question, history)
+    except Exception as e:
+        if "token" in str(e).lower() and "limit" in str(e).lower():
+            logger.warning(f"TokenRouter API token limit reached: {e}. Falling back to mock LLM.")
+            answer = mock_llm_call(body.question, history)
+        else:
+            logger.error(f"LLM API Error: {e}. Falling back to mock LLM.")
+            answer = mock_llm_call(body.question, history)
 
     # 3. Save to Redis
     history.append({"role": "user", "content": body.question})
