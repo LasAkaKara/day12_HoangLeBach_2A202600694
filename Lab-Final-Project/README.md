@@ -44,3 +44,7 @@ The frontend UI will be accessible at `http://localhost:5173`.
 
 ## Deployment
 For deployment instructions to cloud platforms like **Railway** or **Render**, please refer to the [deployments.md](./deployments.md) file.
+
+
+## Public URL:
+Use the chat at https://frontend-production-e8fd.up.railway.app/

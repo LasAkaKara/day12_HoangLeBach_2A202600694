@@ -130,6 +130,7 @@
 ### Project Overview
 The final project integrates a robust FastAPI backend with a modern React + Vite frontend, maintaining stateless memory persistence via Redis. The entire stack has been containerized and successfully deployed to the cloud, demonstrating a complete end-to-end production-ready AI application with a beautiful Glassmorphism user interface.
 
+Check out the web at: https://frontend-production-e8fd.up.railway.app/
 ### Screenshots
 - **Deployment Success:**
   ![Final Deployment Success](Screenshots/Final-Deploy_Success.png)
