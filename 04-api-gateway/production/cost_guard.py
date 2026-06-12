@@ -10,6 +10,8 @@ Trong production: lưu trong Redis/DB, không phải in-memory.
 """
 import time
 import logging
+import os
+import redis
 from dataclasses import dataclass, field
 from fastapi import HTTPException
 
@@ -46,62 +48,100 @@ class CostGuard:
         self.daily_budget_usd = daily_budget_usd
         self.global_daily_budget_usd = global_daily_budget_usd
         self.warn_at_pct = warn_at_pct
-        self._records: dict[str, UsageRecord] = {}
-        self._global_today = time.strftime("%Y-%m-%d")
-        self._global_cost = 0.0
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        self.r = redis.from_url(redis_url, decode_responses=True)
 
-    def _get_record(self, user_id: str) -> UsageRecord:
+    @property
+    def _global_cost(self) -> float:
         today = time.strftime("%Y-%m-%d")
-        record = self._records.get(user_id)
-        if not record or record.day != today:
-            self._records[user_id] = UsageRecord(user_id=user_id, day=today)
-        return self._records[user_id]
+        key = f"cost_guard:global_cost:{today}"
+        val = self.r.get(key)
+        return float(val) if val else 0.0
+
+    def _get_user_cost(self, user_id: str, today: str) -> float:
+        key = f"cost_guard:user_cost:{user_id}:{today}"
+        val = self.r.get(key)
+        return float(val) if val else 0.0
 
     def check_budget(self, user_id: str) -> None:
         """
         Kiểm tra budget trước khi gọi LLM.
         Raise 402 nếu vượt budget.
         """
-        record = self._get_record(user_id)
+        today = time.strftime("%Y-%m-%d")
 
         # Global budget check
-        if self._global_cost >= self.global_daily_budget_usd:
-            logger.critical(f"GLOBAL BUDGET EXCEEDED: ${self._global_cost:.4f}")
+        current_global_cost = self._global_cost
+        if current_global_cost >= self.global_daily_budget_usd:
+            logger.critical(f"GLOBAL BUDGET EXCEEDED: ${current_global_cost:.4f}")
             raise HTTPException(
                 status_code=503,
                 detail="Service temporarily unavailable due to budget limits. Try again tomorrow.",
             )
 
         # Per-user budget check
-        if record.total_cost_usd >= self.daily_budget_usd:
+        current_user_cost = self._get_user_cost(user_id, today)
+        if current_user_cost >= self.daily_budget_usd:
             raise HTTPException(
                 status_code=402,  # Payment Required
                 detail={
                     "error": "Daily budget exceeded",
-                    "used_usd": record.total_cost_usd,
+                    "used_usd": current_user_cost,
                     "budget_usd": self.daily_budget_usd,
                     "resets_at": "midnight UTC",
                 },
             )
 
         # Warning khi gần hết budget
-        if record.total_cost_usd >= self.daily_budget_usd * self.warn_at_pct:
+        if current_user_cost >= self.daily_budget_usd * self.warn_at_pct:
             logger.warning(
-                f"User {user_id} at {record.total_cost_usd/self.daily_budget_usd*100:.0f}% budget"
+                f"User {user_id} at {current_user_cost/self.daily_budget_usd*100:.0f}% budget"
             )
 
     def record_usage(
         self, user_id: str, input_tokens: int, output_tokens: int
     ) -> UsageRecord:
         """Ghi nhận usage sau khi gọi LLM xong."""
-        record = self._get_record(user_id)
-        record.input_tokens += input_tokens
-        record.output_tokens += output_tokens
-        record.request_count += 1
-
+        today = time.strftime("%Y-%m-%d")
+        
         cost = (input_tokens / 1000 * PRICE_PER_1K_INPUT_TOKENS +
                 output_tokens / 1000 * PRICE_PER_1K_OUTPUT_TOKENS)
-        self._global_cost += cost
+
+        # TTL 32 ngày (để tự reset sau 1 tháng)
+        ttl = 32 * 24 * 3600
+
+        # Update Redis
+        user_cost_key = f"cost_guard:user_cost:{user_id}:{today}"
+        self.r.incrbyfloat(user_cost_key, cost)
+        self.r.expire(user_cost_key, ttl)
+
+        req_key = f"cost_guard:user_reqs:{user_id}:{today}"
+        self.r.incr(req_key, 1)
+        self.r.expire(req_key, ttl)
+
+        in_tokens_key = f"cost_guard:user_in_tokens:{user_id}:{today}"
+        self.r.incr(in_tokens_key, input_tokens)
+        self.r.expire(in_tokens_key, ttl)
+
+        out_tokens_key = f"cost_guard:user_out_tokens:{user_id}:{today}"
+        self.r.incr(out_tokens_key, output_tokens)
+        self.r.expire(out_tokens_key, ttl)
+
+        global_cost_key = f"cost_guard:global_cost:{today}"
+        self.r.incrbyfloat(global_cost_key, cost)
+        self.r.expire(global_cost_key, ttl)
+
+        total_in = int(self.r.get(in_tokens_key) or 0)
+        total_out = int(self.r.get(out_tokens_key) or 0)
+        total_reqs = int(self.r.get(req_key) or 0)
+
+        record = UsageRecord(
+            user_id=user_id,
+            input_tokens=total_in,
+            output_tokens=total_out,
+            request_count=total_reqs,
+            day=today
+        )
 
         logger.info(
             f"Usage: user={user_id} req={record.request_count} "
@@ -110,17 +150,23 @@ class CostGuard:
         return record
 
     def get_usage(self, user_id: str) -> dict:
-        record = self._get_record(user_id)
+        today = time.strftime("%Y-%m-%d")
+        
+        cost = self._get_user_cost(user_id, today)
+        requests = int(self.r.get(f"cost_guard:user_reqs:{user_id}:{today}") or 0)
+        in_tokens = int(self.r.get(f"cost_guard:user_in_tokens:{user_id}:{today}") or 0)
+        out_tokens = int(self.r.get(f"cost_guard:user_out_tokens:{user_id}:{today}") or 0)
+
         return {
             "user_id": user_id,
-            "date": record.day,
-            "requests": record.request_count,
-            "input_tokens": record.input_tokens,
-            "output_tokens": record.output_tokens,
-            "cost_usd": record.total_cost_usd,
+            "date": today,
+            "requests": requests,
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens,
+            "cost_usd": cost,
             "budget_usd": self.daily_budget_usd,
-            "budget_remaining_usd": max(0, self.daily_budget_usd - record.total_cost_usd),
-            "budget_used_pct": round(record.total_cost_usd / self.daily_budget_usd * 100, 1),
+            "budget_remaining_usd": max(0, self.daily_budget_usd - cost),
+            "budget_used_pct": round(cost / self.daily_budget_usd * 100, 1) if self.daily_budget_usd else 0.0,
         }
 
 

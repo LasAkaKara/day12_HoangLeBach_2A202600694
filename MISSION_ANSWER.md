@@ -63,16 +63,48 @@
 ## Part 3: Cloud Deployment
 
 ### Exercise 3.2: Render deployment
-- URL: https://your-app.railway.app
-- Screenshot: [Link to screenshot in repo]
+- URL: https://ai-agent-ndg5.onrender.com/
+- Screenshot:
+    
 
 ## Part 4: API Security
 
-### Exercise 4.1-4.3: Test results
-[Paste your test outputs]
+### Exercise 4.1: API Key authentication
+- **API key được check ở đâu?** Hàm `verify_api_key(api_key: str = Security(api_key_header))` được gọi qua dependency trong endpoint (`Depends(verify_api_key)`).
+- **Điều gì xảy ra nếu sai key?** Server trả về mã lỗi HTTP 403 Forbidden với thông báo "Invalid API key."
+- **Làm sao rotate key?** Chỉ cần thay đổi biến môi trường `AGENT_API_KEY` rồi restart lại ứng dụng mà không cần phải can thiệp trực tiếp vào mã nguồn.
+
+### Exercise 4.2: JWT Authentication
+- **Flow hoạt động:** Client gọi API `/auth/token` để đổi `username/password` lấy một `access_token` (chuỗi JWT). Khi truy cập các endpoint được bảo vệ (như `/ask`), Client đính kèm JWT này vào header `Authorization: Bearer <token>`. Middleware `verify_token` sẽ tự động parse token, xác thực và lấy ra role để phân quyền.
+
+### Exercise 4.3: Rate limiting
+- **Algorithm nào được dùng?** Thuật toán Sliding Window Counter (dùng `deque` để lưu danh sách timestamp của các request trong khoảng window).
+- **Limit là bao nhiêu requests/minute?**
+  - **User thường:** 10 requests / 60 seconds.
+  - **Admin:** 100 requests / 60 seconds.
+- **Làm sao bypass limit cho admin?** Backend đọc Role từ Payload của JWT. Nếu role là "admin", hệ thống sẽ tự động dùng object `rate_limiter_admin` (100 req/min) thay cho `rate_limiter_user` (10 req/min).
 
 ### Exercise 4.4: Cost guard implementation
-[Explain your approach]
+- **Sử dụng Redis (Giải pháp Production-ready):**
+  Trong code hiện tại `CostGuard` đang lưu in-memory (`self._records = {}`), điều này sẽ không hoạt động đúng nếu deploy nhiều instance/container. Cần sử dụng Redis để lưu trạng thái dùng chung.
+  ```python
+  import redis
+  from datetime import datetime
+  
+  r = redis.Redis(host='localhost', port=6379, db=0)
+  
+  def check_budget(user_id: str, estimated_cost: float) -> bool:
+      month_key = datetime.now().strftime("%Y-%m")
+      key = f"budget:{user_id}:{month_key}"
+      
+      current = float(r.get(key) or 0)
+      if current + estimated_cost > 10.0: # Giới hạn $10/tháng
+          return False
+      
+      r.incrbyfloat(key, estimated_cost)
+      r.expire(key, 32 * 24 * 3600)  # Tự xoá sau 32 ngày
+      return True
+  ```
 
 ## Part 5: Scaling & Reliability
 
