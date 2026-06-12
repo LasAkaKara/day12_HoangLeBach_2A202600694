@@ -1,0 +1,32 @@
+# Render Blueprint (Infrastructure as Code)
+# Khởi tạo mô hình tương tự Docker Compose nhưng dành cho Cloud (Render)
+
+services:
+  # 1. API Web Service
+  - type: web
+    name: ai-agent-final
+    env: docker
+    region: singapore
+    plan: free
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: AGENT_API_KEY
+        generateValue: true  # Render sẽ tự sinh chuỗi bảo mật ngẫu nhiên
+      - key: LOG_LEVEL
+        value: INFO
+      - key: REDIS_URL
+        # Lấy tự động URL từ service Redis bên dưới
+        fromService:
+          type: redis
+          name: redis-final
+          property: connectionString
+
+  # 2. Managed Redis
+  - type: redis
+    name: redis-final
+    region: singapore
+    plan: free
+    ipAllowList: [] # [] = chỉ cho phép các service nội bộ trên Render truy cập
