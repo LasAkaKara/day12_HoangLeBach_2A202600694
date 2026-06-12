@@ -30,3 +30,19 @@ services:
     region: singapore
     plan: free
     ipAllowList: [] # [] = chỉ cho phép các service nội bộ trên Render truy cập
+
+  # 3. Frontend Static Site
+  - type: web
+    name: ai-agent-frontend
+    env: static
+    region: singapore
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        # Trỏ URL của API Backend để Frontend có thể gọi được
+        fromService:
+          type: web
+          name: ai-agent-final
+          property: url
