@@ -62,7 +62,7 @@
 
 ## Part 3: Cloud Deployment
 
-### Exercise 3.1: Railway deployment
+### Exercise 3.2: Render deployment
 - URL: https://your-app.railway.app
 - Screenshot: [Link to screenshot in repo]
 
