@@ -12,12 +12,11 @@ services:
   - type: web
     name: ai-agent
     runtime: python
-    rootDir: 01-localhost-vs-production/production
     region: singapore         # Chọn region gần user nhất
     plan: free                # free | starter | standard | pro
 
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd 01-localhost-vs-production/production && pip install -r requirements.txt
+    startCommand: cd 01-localhost-vs-production/production && uvicorn app:app --host 0.0.0.0 --port $PORT
 
     healthCheckPath: /health   # Render check path này
 
