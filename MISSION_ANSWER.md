@@ -65,8 +65,8 @@
 ### Exercise 3.2: Render deployment
 - URL: https://ai-agent-ndg5.onrender.com/
 - Screenshot:
-    
-
+    ![03-Deploy_Success](Screenshots/03-Deploy_Success.png)
+    ![03-Web](Screenshots/03-Web.png)
 ## Part 4: API Security
 
 ### Exercise 4.1: API Key authentication
@@ -124,4 +124,15 @@
 
 - **Exercise 5.4 (Load balancing):**
   - Khi start nhiều instance (`--scale agent=3`), Nginx đóng vai trò làm Load Balancer. Client gọi tới port 80 của Nginx, Nginx sẽ luân phiên phân phát request đều đặn đến 3 container backend đằng sau. Giúp hệ thống phân tải (Scale out) và nếu 1 node chết, các node còn lại vẫn hứng traffic.
-```
+
+## Part 6: Final Full-Stack Application
+
+### Project Overview
+The final project integrates a robust FastAPI backend with a modern React + Vite frontend, maintaining stateless memory persistence via Redis. The entire stack has been containerized and successfully deployed to the cloud, demonstrating a complete end-to-end production-ready AI application with a beautiful Glassmorphism user interface.
+
+### Screenshots
+- **Deployment Success:**
+  ![Final Deployment Success](Screenshots/Final-Deploy_Success.png)
+  
+- **Web Interface:**
+  ![Final Web Interface](Screenshots/Final-Web.png)
